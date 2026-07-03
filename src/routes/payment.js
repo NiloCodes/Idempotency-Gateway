@@ -1,4 +1,5 @@
 const express = require("express");
+const { idempotencyStore, hashPayload, clearKey } = require("../idempotency");
 const router = express.Router();
 
 function mockPaymentProcessing(amount, currency) {
@@ -19,7 +20,6 @@ router.post("/", async (req, res) => {
   const idempotencyKey = req.headers["idempotency-key"];
   const { amount, currency } = req.body || {};
 
-  // 1. Basic validation
   if (!idempotencyKey) {
     return res.status(400).json({ error: "Missing 'Idempotency-Key' header." });
   }
@@ -27,6 +27,33 @@ router.post("/", async (req, res) => {
     return res
       .status(400)
       .json({ error: "Please provide both a numeric amount and currency." });
+  }
+
+  const currentHash = hashPayload(req.body);
+
+  // STORY 1: Happy Path (New Request!)
+  const paymentPromise = mockPaymentProcessing(amount, currency);
+
+  idempotencyStore.set(idempotencyKey, {
+    status: "IN_FLIGHT",
+    bodyHash: currentHash,
+    promise: paymentPromise,
+  });
+
+  try {
+    const result = await paymentPromise;
+
+    idempotencyStore.set(idempotencyKey, {
+      status: "COMPLETED",
+      bodyHash: currentHash,
+      response: result,
+    });
+
+    res.set("X-Cache-Hit", "false");
+    return res.status(result.status).json(result.data);
+  } catch (error) {
+    clearKey(idempotencyKey);
+    return res.status(500).json({ error: "Payment processing failed." });
   }
 });
 
