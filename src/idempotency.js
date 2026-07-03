@@ -3,12 +3,23 @@
 const crypto = require("crypto");
 
 const idempotencyStore = new Map();
-
 function hashPayload(body) {
   if (!body || typeof body !== "object" || Object.keys(body).length === 0) {
     return "";
   }
-  return crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+
+  // Sort keys alphabetically so {"amount": 100, "currency": "GHS"} matches {"currency": "GHS", "amount": 100}
+  const sorted = Object.keys(body)
+    .sort()
+    .reduce((acc, key) => {
+      acc[key] = body[key];
+      return acc;
+    }, {});
+
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(sorted))
+    .digest("hex");
 }
 
 module.exports = {
