@@ -1,10 +1,11 @@
 {
   "name": "idempotency-gateway",
   "version": "1.0.0",
-  "description": "This challenge is designed to test your ability to bridge Computer Science fundamentals with Modern Backend Engineering.",
-  "main": "index.js",
+  "description": "An Idempotency Gateway API built for FinSafe Transactions",
+  "main": "src/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
   },
   "keywords": [],
   "author": "",
