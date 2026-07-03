@@ -41,6 +41,12 @@ router.post("/", async (req, res) => {
         error: "Idempotency key already used for a different request body.",
       });
     }
+
+    // STORY 2: Duplicate Attempt (Payment already finished previously)
+    if (existing.status === "COMPLETED") {
+      res.set("X-Cache-Hit", "true");
+      return res.status(existing.response.status).json(existing.response.data);
+    }
   }
   // STORY 1: Happy Path (New Request!)
   const paymentPromise = mockPaymentProcessing(amount, currency);
