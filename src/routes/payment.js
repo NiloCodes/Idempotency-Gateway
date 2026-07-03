@@ -47,6 +47,19 @@ router.post("/", async (req, res) => {
       res.set("X-Cache-Hit", "true");
       return res.status(existing.response.status).json(existing.response.data);
     }
+
+    // BONUS STORY: Concurrent Race Condition (Payment is still IN_FLIGHT!)
+    if (existing.status === "IN_FLIGHT") {
+      try {
+        const result = await existing.promise;
+        res.set("X-Cache-Hit", "true");
+        return res.status(result.status).json(result.data);
+      } catch (err) {
+        return res
+          .status(500)
+          .json({ error: "Original request failed during retry." });
+      }
+    }
   }
   // STORY 1: Happy Path (New Request!)
   const paymentPromise = mockPaymentProcessing(amount, currency);
