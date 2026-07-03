@@ -5,60 +5,58 @@
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as Client System (E-Commerce)
-    participant Gateway as Idempotency Gateway (Express)
-    participant Store as In-Memory Store (Map)
-    participant Processor as Payment Processor (Simulated)
+    actor Client as E-Commerce Client
+    participant Gateway as Idempotency Gateway
+    participant Store as In-Memory Store
+    participant Processor as Payment Processor
 
     %% ==========================================
-    %% SCENARIO 1: FIRST TRANSACTION (HAPPY PATH)
+    %% 1. FIRST TRANSACTION (HAPPY PATH)
     %% ==========================================
-    Note over Client, Processor: Scenario 1: New Transaction (Happy Path)
-    Client->>Gateway: POST /process-payment (Key: "tx-001", Payload: {amount: 100})
-    Gateway->>Store: Lookup Key "tx-001"
-    Store-->>Gateway: Not Found (New Key)
-    Gateway->>Gateway: Generate Hash(Payload)
-    Gateway->>Store: Save { status: 'IN_FLIGHT', payloadHash, activePromise }
-    Gateway->>Processor: Execute Payment (2-Second Async Delay)
-    Processor-->>Gateway: Payment Successful (Transaction ID Generated)
+    Note over Client, Processor: 1. New Transaction (Happy Path)
+    Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 100}]
+    Gateway->>Store: Lookup "tx-001"
+    Store-->>Gateway: null (New Key)
+    Gateway->>Gateway: Hash(Body)
+    Gateway->>Store: Set { status: 'IN_FLIGHT', hash, promise }
+    Gateway->>Processor: Process Payment (2s async)
+    Processor-->>Gateway: { status: 201, txId: "id_123" }
     Gateway->>Store: Update { status: 'COMPLETED', response }
-    Gateway-->>Client: 201 Created | Header: X-Cache-Hit: false
+    Gateway-->>Client: 201 Created | X-Cache-Hit: false
 
     %% ==========================================
-    %% SCENARIO 2: DUPLICATE ATTEMPT (CACHED HIT)
+    %% 2. DUPLICATE ATTEMPT (CACHED HIT)
     %% ==========================================
-    Note over Client, Processor: Scenario 2: Duplicate Attempt (Network Retry)
-    Client->>Gateway: POST /process-payment (Key: "tx-001", Payload: {amount: 100})
-    Gateway->>Store: Lookup Key "tx-001"
-    Store-->>Gateway: Found { status: 'COMPLETED', payloadHash, response }
-    Gateway->>Gateway: Generate Hash(Payload) & Compare with Store
-    Note over Gateway: Hashes Match! Transaction already completed.
-    Gateway-->>Client: 201 Created (Cached Response) | Header: X-Cache-Hit: true [Instant Return]
+    Note over Client, Processor: 2. Duplicate Attempt (Network Retry)
+    Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 100}]
+    Gateway->>Store: Lookup "tx-001"
+    Store-->>Gateway: { status: 'COMPLETED', hash, response }
+    Gateway->>Gateway: Hash(Body) == Store.hash
+    Gateway-->>Client: 201 Created | X-Cache-Hit: true (Instant)
 
     %% ==========================================
-    %% SCENARIO 3: FRAUD / ERROR CHECK (MISMATCH)
+    %% 3. PAYLOAD MISMATCH (ERROR CHECK)
     %% ==========================================
-    Note over Client, Processor: Scenario 3: Different Payload, Same Key (Fraud/Error Check)
-    Client->>Gateway: POST /process-payment (Key: "tx-001", Payload: {amount: 500} - CHANGED!)
-    Gateway->>Store: Lookup Key "tx-001"
-    Store-->>Gateway: Found { status: 'COMPLETED' or 'IN_FLIGHT', payloadHash }
-    Gateway->>Gateway: Generate Hash(Payload) & Compare with Store
-    Note over Gateway, Store: CRITICAL: Payload Hash Mismatch Detected!
-    Gateway-->>Client: 422 Unprocessable Entity ("Key already used for different payload")
+    Note over Client, Processor: 3. Payload Mismatch (Fraud/Error Check)
+    Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 500}]
+    Gateway->>Store: Lookup "tx-001"
+    Store-->>Gateway: { status: 'COMPLETED', hash }
+    Gateway->>Gateway: Hash(Body) != Store.hash
+    Gateway-->>Client: 422 Unprocessable Entity
 
     %% ==========================================
-    %% SCENARIO 4: CONCURRENT RACE CONDITION
+    %% 4. IN-FLIGHT RACE CONDITION (BONUS)
     %% ==========================================
-    Note over Client, Processor: Scenario 4: Concurrent "In-Flight" Race Condition (Bonus)
-    Client->>Gateway: POST /process-payment (Key: "tx-002") [Request A]
-    Gateway->>Store: Save { status: 'IN_FLIGHT', activePromise: Promise A }
-    Gateway->>Processor: Execute Payment (2-Second Delay Starts...)
+    Note over Client, Processor: 4. Concurrent Race Condition (In-Flight Check)
+    Client->>Gateway: POST /process-payment [Key: "tx-002"] (Req A)
+    Gateway->>Store: Set { status: 'IN_FLIGHT', promise: PromiseA }
+    Gateway->>Processor: Process Payment (2s async starts)
     
-    Client->>Gateway: POST /process-payment (Key: "tx-002") [Request B - Arrives at +50ms]
-    Gateway->>Store: Lookup Key "tx-002"
-    Store-->>Gateway: Found { status: 'IN_FLIGHT', activePromise: Promise A }
-    Note over Gateway: Request B detects IN_FLIGHT state.<br/>Instead of failing or starting a new charge, it awaits Promise A.
-    Processor-->>Gateway: Promise A Resolves (Payment Successful)
-    Gateway-->>Client: Request A receives 201 Created | X-Cache-Hit: false
-    Gateway-->>Client: Request B receives identical 201 Created | X-Cache-Hit: true
+    Client->>Gateway: POST /process-payment [Key: "tx-002"] (Req B, +50ms)
+    Gateway->>Store: Lookup "tx-002"
+    Store-->>Gateway: { status: 'IN_FLIGHT', promise: PromiseA }
+    Note over Gateway: Req B awaits PromiseA<br/>(No secondary processor call)
+    Processor-->>Gateway: PromiseA resolves
+    Gateway-->>Client: Req A -> 201 Created | X-Cache-Hit: false
+    Gateway-->>Client: Req B -> 201 Created | X-Cache-Hit: true
 ```
