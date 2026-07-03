@@ -61,4 +61,4 @@ sequenceDiagram
     Processor-->>Gateway: Promise A Resolves (Payment Successful)
     Gateway-->>Client: Request A receives 201 Created | X-Cache-Hit: false
     Gateway-->>Client: Request B receives identical 201 Created | X-Cache-Hit: true
-```mermaid
+```
