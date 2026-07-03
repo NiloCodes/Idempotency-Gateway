@@ -31,6 +31,17 @@ router.post("/", async (req, res) => {
 
   const currentHash = hashPayload(req.body);
 
+  // 2. Check if we have seen this key before
+  if (idempotencyStore.has(idempotencyKey)) {
+    const existing = idempotencyStore.get(idempotencyKey);
+
+    // STORY 3: Fraud/Error Check (Same key, different payload!)
+    if (existing.bodyHash !== currentHash) {
+      return res.status(422).json({
+        error: "Idempotency key already used for a different request body.",
+      });
+    }
+  }
   // STORY 1: Happy Path (New Request!)
   const paymentPromise = mockPaymentProcessing(amount, currency);
 
