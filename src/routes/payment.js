@@ -1,7 +1,7 @@
 const express = require("express");
 const { idempotencyStore, hashPayload, clearKey } = require("../idempotency");
+const { getCompletedRecord, saveCompletedRecord } = require("../db");
 const router = express.Router();
-
 function mockPaymentProcessing(amount, currency) {
   return new Promise((resolve) => {
     setTimeout(() => {
