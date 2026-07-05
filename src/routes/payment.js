@@ -43,9 +43,15 @@ router.post("/", async (req, res) => {
     }
 
     // STORY 2: Duplicate Attempt (Payment already finished previously)
-    if (existing.status === "COMPLETED") {
+    const existingRecord = getCompletedRecord(idempotencyKey);
+    if (existingRecord) {
+      if (existingRecord.bodyHash !== currentHash) {
+        return res.status(422).json({
+          error: "Idempotency key already used for a different request body.",
+        });
+      }
       res.set("X-Cache-Hit", "true");
-      return res.status(existing.response.status).json(existing.response.data);
+      return res.status(existingRecord.status).json(existingRecord.data);
     }
 
     // BONUS STORY: Concurrent Race Condition (Payment is still IN_FLIGHT!)
@@ -73,11 +79,13 @@ router.post("/", async (req, res) => {
   try {
     const result = await paymentPromise;
 
-    idempotencyStore.set(idempotencyKey, {
-      status: "COMPLETED",
-      bodyHash: currentHash,
-      response: result,
-    });
+    saveCompletedRecord(
+      idempotencyKey,
+      currentHash,
+      result.status,
+      result.data,
+    );
+    clearKey(idempotencyKey); // done being in-flight now that it's persisted
 
     res.set("X-Cache-Hit", "false");
     return res.status(result.status).json(result.data);
