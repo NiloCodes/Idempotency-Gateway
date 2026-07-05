@@ -2,6 +2,7 @@ const express = require("express");
 const { idempotencyStore, hashPayload, clearKey } = require("../idempotency");
 const { getCompletedRecord, saveCompletedRecord } = require("../db");
 const router = express.Router();
+
 function mockPaymentProcessing(amount, currency) {
   return new Promise((resolve) => {
     setTimeout(() => {
@@ -31,7 +32,7 @@ router.post("/", async (req, res) => {
 
   const currentHash = hashPayload(req.body);
 
-  // 2. Check if we have seen this key before
+  // 2. Check if a payment with this key is currently in-flight (in-memory only)
   if (idempotencyStore.has(idempotencyKey)) {
     const existing = idempotencyStore.get(idempotencyKey);
 
@@ -40,18 +41,6 @@ router.post("/", async (req, res) => {
       return res.status(422).json({
         error: "Idempotency key already used for a different request body.",
       });
-    }
-
-    // STORY 2: Duplicate Attempt (Payment already finished previously)
-    const existingRecord = getCompletedRecord(idempotencyKey);
-    if (existingRecord) {
-      if (existingRecord.bodyHash !== currentHash) {
-        return res.status(422).json({
-          error: "Idempotency key already used for a different request body.",
-        });
-      }
-      res.set("X-Cache-Hit", "true");
-      return res.status(existingRecord.status).json(existingRecord.data);
     }
 
     // BONUS STORY: Concurrent Race Condition (Payment is still IN_FLIGHT!)
@@ -67,6 +56,21 @@ router.post("/", async (req, res) => {
       }
     }
   }
+
+  // STORY 2: Duplicate Attempt (Payment already finished, persisted in SQLite)
+  // Checked unconditionally — a completed key is removed from idempotencyStore,
+  // so this must NOT depend on idempotencyStore.has() being true.
+  const existingRecord = getCompletedRecord(idempotencyKey);
+  if (existingRecord) {
+    if (existingRecord.bodyHash !== currentHash) {
+      return res.status(422).json({
+        error: "Idempotency key already used for a different request body.",
+      });
+    }
+    res.set("X-Cache-Hit", "true");
+    return res.status(existingRecord.status).json(existingRecord.data);
+  }
+
   // STORY 1: Happy Path (New Request!)
   const paymentPromise = mockPaymentProcessing(amount, currency);
 
