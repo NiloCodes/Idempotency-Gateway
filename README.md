@@ -3,71 +3,69 @@
 ## Architecture & Logic Flow
 
 ```mermaid
+```mermaid
 sequenceDiagram
     autonumber
     actor Client as E-Commerce Client
     participant Gateway as Idempotency Gateway
-    participant RAM as In-Memory Map
-    participant DB as SQLite Database
+    participant Lock as In-Flight Lock (Map, RAM)
+    participant DB as SQLite (completed_payments)
     participant Processor as Payment Processor
 
-    %% ==========================================
-    %% 1. FIRST TRANSACTION (HAPPY PATH)
-    %% ==========================================
     Note over Client, Processor: 1. New Transaction (Happy Path)
     Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 100}]
-    Gateway->>RAM: Check active "tx-001"
-    RAM-->>Gateway: null (Not in-flight)
-    Gateway->>DB: Lookup "tx-001"
-    DB-->>Gateway: null (Not completed)
     Gateway->>Gateway: Hash(Body)
-    Gateway->>RAM: Set { status: 'IN_FLIGHT', hash, promise }
+    Gateway->>Lock: Is "tx-001" IN_FLIGHT?
+    Lock-->>Gateway: No
+    Gateway->>DB: Is "tx-001" already COMPLETED?
+    DB-->>Gateway: No record found
+    Gateway->>Lock: Claim key: set IN_FLIGHT { hash, promise }
     Gateway->>Processor: Process Payment (2s async)
-    Processor-->>Gateway: { status: 201, txId: "id_123" }
-    Gateway->>DB: Save { status: 201, hash, response }
-    Gateway->>RAM: Delete "tx-001" (Free RAM)
+    Processor-->>Gateway: { status: 201, txId: "tx_123" }
+    Gateway->>DB: INSERT completed record { key, hash, response }
+    Gateway->>Lock: Release key (delete IN_FLIGHT entry)
     Gateway-->>Client: 201 Created | X-Cache-Hit: false
 
-    %% ==========================================
-    %% 2. DUPLICATE ATTEMPT (CACHED HIT)
-    %% ==========================================
-    Note over Client, Processor: 2. Duplicate Attempt (Network Retry)
+    Note over Client, Processor: 2. Duplicate Attempt (Retry After Completion)
     Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 100}]
-    Gateway->>RAM: Check active "tx-001"
-    RAM-->>Gateway: null (Not in-flight)
-    Gateway->>DB: Lookup "tx-001"
-    DB-->>Gateway: { status: 201, hash, response }
+    Gateway->>Gateway: Hash(Body)
+    Gateway->>Lock: Is "tx-001" IN_FLIGHT?
+    Lock-->>Gateway: No, already finished
+    Gateway->>DB: Is "tx-001" already COMPLETED?
+    DB-->>Gateway: Yes { hash, response }
     Gateway->>Gateway: Hash(Body) == DB.hash
-    Gateway-->>Client: 201 Created | X-Cache-Hit: true (Instant)
+    Gateway-->>Client: 201 Created | X-Cache-Hit: true
 
-    %% ==========================================
-    %% 3. PAYLOAD MISMATCH (ERROR CHECK)
-    %% ==========================================
     Note over Client, Processor: 3. Payload Mismatch (Fraud/Error Check)
     Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 500}]
-    Gateway->>RAM: Check active "tx-001"
-    RAM-->>Gateway: null (Not in-flight)
-    Gateway->>DB: Lookup "tx-001"
-    DB-->>Gateway: { status: 201, hash }
+    Gateway->>Gateway: Hash(Body)
+    Gateway->>Lock: Is "tx-001" IN_FLIGHT?
+    Lock-->>Gateway: No
+    Gateway->>DB: Is "tx-001" already COMPLETED?
+    DB-->>Gateway: Yes { hash: originalHash }
     Gateway->>Gateway: Hash(Body) != DB.hash
     Gateway-->>Client: 422 Unprocessable Entity
 
-    %% ==========================================
-    %% 4. IN-FLIGHT RACE CONDITION (BONUS)
-    %% ==========================================
     Note over Client, Processor: 4. Concurrent Race Condition (In-Flight Check)
-    Client->>Gateway: POST /process-payment [Key: "tx-002"] (Req A)
-    Gateway->>RAM: Set { status: 'IN_FLIGHT', promise: PromiseA }
+    Client->>Gateway: POST /process-payment [Key: "tx-002"] Request A
+    Gateway->>Lock: IN_FLIGHT? No
+    Gateway->>DB: COMPLETED? No
+    Gateway->>Lock: Claim key: set IN_FLIGHT { promise: PromiseA }
     Gateway->>Processor: Process Payment (2s async starts)
-    
-    Client->>Gateway: POST /process-payment [Key: "tx-002"] (Req B, +50ms)
-    Gateway->>RAM: Check active "tx-002"
-    RAM-->>Gateway: { status: 'IN_FLIGHT', promise: PromiseA }
-    Note over Gateway: Req B awaits PromiseA<br/>(No secondary processor call)
-    Processor-->>Gateway: PromiseA resolves
-    Gateway-->>Client: Req A -> 201 Created | X-Cache-Hit: false
-    Gateway-->>Client: Req B -> 201 Created | X-Cache-Hit: true
+
+    Client->>Gateway: POST /process-payment [Key: "tx-002"] Request B, +50ms
+    Gateway->>Lock: Is "tx-002" IN_FLIGHT?
+    Lock-->>Gateway: Yes { promise: PromiseA }
+    Note over Gateway: Request B awaits PromiseA directly. No second Processor call.
+
+    Processor-->>Gateway: PromiseA resolves { status: 201, txId: "tx_456" }
+    Gateway->>DB: INSERT completed record
+    Gateway->>Lock: Release key
+    Gateway-->>Client: Request A - 201 Created | X-Cache-Hit: false
+    Gateway-->>Client: Request B - 201 Created | X-Cache-Hit: true, same txId
 ```
+
+Plain text, ready to paste straight into the ` ```mermaid ` block in your README (GitHub renders it automatically).```
 
     
 ## Setup Instructions
