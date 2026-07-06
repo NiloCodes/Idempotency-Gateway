@@ -66,7 +66,8 @@ sequenceDiagram
     Note over Gateway: Req B awaits PromiseA<br/>(No secondary processor call)
     Processor-->>Gateway: PromiseA resolves
     Gateway-->>Client: Req A -> 201 Created | X-Cache-Hit: false
-    Gateway-->>Client: Req B -> 201 Created | X-Cache-Hit: true```
+    Gateway-->>Client: Req B -> 201 Created | X-Cache-Hit: true
+```
 
     
 ## Setup Instructions
