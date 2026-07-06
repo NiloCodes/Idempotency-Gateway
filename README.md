@@ -69,12 +69,6 @@ sequenceDiagram
     Gateway-->>Client: Req B -> 201 Created | X-Cache-Hit: true
 ```
 
-<<<<<<< HEAD
-
-
-=======
->>>>>>> parent of 84dfe5d (Revise payment processing sequence diagram)
-    
 ## Setup Instructions
 
 **Requirements:** Node.js (v18 or newer recommended)
