@@ -3,7 +3,6 @@
 ## Architecture & Logic Flow
 
 ```mermaid
-```mermaid
 sequenceDiagram
     autonumber
     actor Client as E-Commerce Client
@@ -65,7 +64,7 @@ sequenceDiagram
     Gateway-->>Client: Request B - 201 Created | X-Cache-Hit: true, same txId
 ```
 
-Plain text, ready to paste straight into the ` ```mermaid ` block in your README (GitHub renders it automatically).```
+
 
     
 ## Setup Instructions
