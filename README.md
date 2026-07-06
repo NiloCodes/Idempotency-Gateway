@@ -135,11 +135,12 @@ curl -i -X POST http://localhost:3000/process-payment \
   -d '{"amount": 100, "currency": "GHS"}'
 
 # => 201 Created, X-Cache-Hit: true, identical body — no double charge
+
+
 ## Testing the Advanced Scenarios
 ### Testing the Fraud Check (Payload Mismatch)
 #If a client reuses an idempotency key but alters the payment details, the gateway will block it. Run this `curl` command using the same key as before, but change the amount to 500:
 
-```bash
 curl -i -X POST http://localhost:3000/process-payment \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: order-42" \
@@ -147,7 +148,7 @@ curl -i -X POST http://localhost:3000/process-payment \
 
 # => 422 Unprocessable Entity
 # {"error":"Idempotency key already used for a different request body."}
-
+```
 ## Design Decisions
 
 - **Two separate stores, not one.** An in-memory `Map` (`idempotencyStore`) tracks requests that are *currently being processed*, while SQLite (`completed_payments` table) permanently stores *finished* results. The Map exists purely to coordinate requests that arrive milliseconds apart; SQLite exists so a result survives a server restart or crash.
