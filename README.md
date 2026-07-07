@@ -94,17 +94,37 @@ curl -i -X POST http://localhost:3000/process-payment \
 ```
 
 ## Testing the Advanced Scenarios
-### Testing the Fraud Check (Payload Mismatch)
-If a client reuses an idempotency key but alters the payment details, the gateway will block it. Run this `curl` command using the same key as before, but change the amount to 500:
-```bash
-curl -i -X POST http://localhost:3000/process-payment \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: order-42" \
-  -d '{"amount": 500, "currency": "GHS"}'
+### Testing the Concurrent Race Condition (Bonus)
 
-# => 422 Unprocessable Entity
-# {"error":"Idempotency key already used for a different request body."}
+The trickiest scenario to test manually is two identical requests arriving at
+the exact same instant. A small script is included for this: `src/test-race.js`.
+It fires two identical payment requests using the same `Idempotency-Key`
+simultaneously (via `Promise.all`, so neither request waits for the other to
+start).
+
+With the server running (`npm start`), open a second terminal and run:
+
+```bash
+node src/test-race.js
 ```
+
+**Expected output:** both requests return the same `transactionId`, but only
+one has `cacheHit: 'false'` (the request that actually processed the
+payment) — the other shows `cacheHit: 'true'` (it detected the payment was
+already in flight and waited for that same result instead of starting a
+second charge).
+
+```
+Firing Request A and Request B simultaneously with key: race-key-...
+
+Both requests finished! Here are the results:
+
+[
+  { name: 'Request A', status: 201, cacheHit: 'false', data: { transactionId: 'tx_...' } },
+  { name: 'Request B', status: 201, cacheHit: 'true',  data: { transactionId: 'tx_...' } }
+]
+```
+
 ## Design Decisions
 
 - **Two separate stores, not one.** An in-memory `Map` (`idempotencyStore`) tracks requests that are *currently being processed*, while SQLite (`completed_payments` table) permanently stores *finished* results. The Map exists purely to coordinate requests that arrive milliseconds apart; SQLite exists so a result survives a server restart or crash.
