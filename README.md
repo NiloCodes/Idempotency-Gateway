@@ -1,73 +1,29 @@
 # Idempotency Gateway
-
 ## Architecture & Logic Flow
 
+### 1. The Gateway Decision Tree
+When a payment request arrives at `/process-payment`, the gateway evaluates it through a strict 3-tier caching and safety check:
+
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as E-Commerce Client
-    participant Gateway as Idempotency Gateway
-    participant Lock as In-Flight Lock (Map, RAM)
-    participant DB as SQLite (completed_payments)
-    participant Processor as Payment Processor
-
-    Note over Client, Processor: 1. New Transaction (Happy Path)
-    Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 100}]
-    Gateway->>Gateway: Hash(Body)
-    Gateway->>Lock: Is "tx-001" IN_FLIGHT?
-    Lock-->>Gateway: No
-    Gateway->>DB: Is "tx-001" already COMPLETED?
-    DB-->>Gateway: No record found
-    Gateway->>Lock: Claim key: set IN_FLIGHT { hash, promise }
-    Gateway->>Processor: Process Payment (2s async)
-    Processor-->>Gateway: { status: 201, txId: "tx_123" }
-    Gateway->>DB: INSERT completed record { key, hash, response }
-    Gateway->>Lock: Release key (delete IN_FLIGHT entry)
-    Gateway-->>Client: 201 Created | X-Cache-Hit: false
-
-    Note over Client, Processor: 2. Duplicate Attempt (Retry After Completion)
-    Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 100}]
-    Gateway->>Gateway: Hash(Body)
-    Gateway->>Lock: Is "tx-001" IN_FLIGHT?
-    Lock-->>Gateway: No, already finished
-    Gateway->>DB: Is "tx-001" already COMPLETED?
-    DB-->>Gateway: Yes { hash, response }
-    Gateway->>Gateway: Hash(Body) == DB.hash
-    Gateway-->>Client: 201 Created | X-Cache-Hit: true
-
-    Note over Client, Processor: 3. Payload Mismatch (Fraud/Error Check)
-    Client->>Gateway: POST /process-payment [Key: "tx-001", Body: {amt: 500}]
-    Gateway->>Gateway: Hash(Body)
-    Gateway->>Lock: Is "tx-001" IN_FLIGHT?
-    Lock-->>Gateway: No
-    Gateway->>DB: Is "tx-001" already COMPLETED?
-    DB-->>Gateway: Yes { hash: originalHash }
-    Gateway->>Gateway: Hash(Body) != DB.hash
-    Gateway-->>Client: 422 Unprocessable Entity
-
-    Note over Client, Processor: 4. Concurrent Race Condition (In-Flight Check)
-    Client->>Gateway: POST /process-payment [Key: "tx-002"] Request A
-    Gateway->>Lock: IN_FLIGHT? No
-    Gateway->>DB: COMPLETED? No
-    Gateway->>Lock: Claim key: set IN_FLIGHT { promise: PromiseA }
-    Gateway->>Processor: Process Payment (2s async starts)
-
-    Client->>Gateway: POST /process-payment [Key: "tx-002"] Request B, +50ms
-    Gateway->>Lock: Is "tx-002" IN_FLIGHT?
-    Lock-->>Gateway: Yes { promise: PromiseA }
-    Note over Gateway: Request B awaits PromiseA directly. No second Processor call.
-
-    Processor-->>Gateway: PromiseA resolves { status: 201, txId: "tx_456" }
-    Gateway->>DB: INSERT completed record
-    Gateway->>Lock: Release key
-    Gateway-->>Client: Request A - 201 Created | X-Cache-Hit: false
-    Gateway-->>Client: Request B - 201 Created | X-Cache-Hit: true, same txId
+flowchart TD
+    A[POST /process-payment] --> B{Has Idempotency-Key?}
+    B -->|No| C[Return 400 Bad Request]
+    B -->|Yes| D{"Key active in RAM?<br/>Tier 1: IN_FLIGHT Lock"}
+    
+    D -->|Yes| E{"Payload Hash matches?"}
+    E -->|No| F["Return 422 Unprocessable Entity<br/>Fraud / Body Mismatch"]
+    E -->|Yes| G["Wait for active Promise<br/>Return identical result | Cache-Hit: true"]
+    
+    D -->|No| H{"Key in SQLite DB?<br/>Tier 2: COMPLETED"}
+    H -->|Yes| I{"Payload Hash matches?"}
+    I -->|No| F
+    I -->|Yes| J["Return saved JSON instantly<br/>Cache-Hit: true | 0ms delay"]
+    
+    H -->|No| K["Tier 3: Brand New Payment<br/>Lock in RAM -> Process (2s) -> Save to DB -> Return 201"]
 ```
-
-
 ## Setup Instructions
 
-**Requirements:** Node.js (v18 or newer recommended)
+**Requirements:** Node.js
 
 ```bash
 git clone https://github.com/NiloCodes/Idempotency-Gateway.git
