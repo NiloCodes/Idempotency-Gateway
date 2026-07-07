@@ -94,6 +94,21 @@ curl -i -X POST http://localhost:3000/process-payment \
 ```
 
 ## Testing the Advanced Scenarios
+### Testing the Fraud Check (Payload Mismatch)
+
+If a client reuses an idempotency key but alters the payment details, the
+gateway will block it. Run this `curl` command using the same key as before,
+but change the amount to 500:
+
+```bash
+curl -i -X POST http://localhost:3000/process-payment \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: order-42" \
+  -d '{"amount": 500, "currency": "GHS"}'
+
+# => 422 Unprocessable Entity
+# {"error":"Idempotency key already used for a different request body."}
+```
 ### Testing the Concurrent Race Condition (Bonus)
 
 The trickiest scenario to test manually is two identical requests arriving at
